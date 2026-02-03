@@ -1,0 +1,113 @@
+# =============================================================================
+# SECURITY & SECRETS
+# =============================================================================
+# Environment files (NEVER commit real credentials)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# =============================================================================
+# PYTHON
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+.mypy_cache/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# =============================================================================
+# IDE & EDITOR
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# =============================================================================
+# JUPYTER
+# =============================================================================
+.ipynb_checkpoints/
+
+# =============================================================================
+# PYTORCH & TRAINING
+# =============================================================================
+lightning_logs/
+checkpoints/
+*.ckpt
+
+# Training artifacts
+training/checkpoints/
+training/lightning_logs/
+training/results/
+training/models/*.ckpt
+training/models/*.pkl
+training/*.log
+
+# API artifacts
+src/api/lightning_logs/
+src/api/__pycache__/
+
+# =============================================================================
+# DATA FILES
+# =============================================================================
+# Raw data (too large for git)
+raw_files/
+*.csv
+!requirements*.txt
+*.pkl
+*.parquet
+
+# Experiments output
+experiments/
+
+# =============================================================================
+# LOGS & TEMP FILES
+# =============================================================================
+*.log
+*.out
+*.err
+*.tmp
+*.bak
+.cache/
+*.sqlite
+
+# =============================================================================
+# MODEL FILES
+# =============================================================================
+*.pt
+*.pth
+*.h5
+*.hdf5
+
+# =============================================================================
+# SYSTEM & MISC
+# =============================================================================
+*.deb
+.DS_Store
+Thumbs.db
+requirements-full.txt
+
+# Documentation build
+docs/_build/
+docs/.doctrees/
+
+# Keep empty directories (add .gitkeep to empty folders you want to track)
+!.gitkeep
+
