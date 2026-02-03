@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: energy_forecast_db
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-energy_forecast}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/db_init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - forecast_network
+
+  # Optional: Forecast API Service
+  # Uncomment to enable the API endpoint
+  # api:
+  #   build: .
+  #   container_name: energy_forecast_api
+  #   environment:
+  #     - DB_USER=${DB_USER:-postgres}
+  #     - DB_PASSWORD=${DB_PASSWORD:-postgres}
+  #     - DB_HOST=postgres
+  #     - DB_PORT=5432
+  #     - DB_NAME=${DB_NAME:-energy_forecast}
+  #     - ENTSOE_API_KEY=${ENTSOE_API_KEY}
+  #   ports:
+  #     - "8000:8000"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./experiments:/app/experiments:ro
+  #   networks:
+  #     - forecast_network
+  #   command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  forecast_network:
+    driver: bridge

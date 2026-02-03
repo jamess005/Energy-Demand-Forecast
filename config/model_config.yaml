@@ -1,0 +1,28 @@
+# Model Configuration
+
+model:
+  name: tft-main
+  hidden_size: 32
+  hidden_continuous_size: 16
+  attention_heads: 4
+  dropout: 0.3
+  encoder_length: 96
+  prediction_length: 24
+
+training:
+  batch_size: 512
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  gradient_clip: 0.1
+  lr_patience: 3
+  lr_factor: 2.0
+  lr_min: 0.000001
+  early_stop_patience: 7
+  max_epochs: 50
+  train_ratio: 0.80
+  val_ratio: 0.10
+
+paths:
+  model_dir: experiments/main/model
+  data_dir: experiments/main/data
+  analysis_dir: experiments/main/analysis

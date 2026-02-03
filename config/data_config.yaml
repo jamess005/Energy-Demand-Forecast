@@ -1,0 +1,27 @@
+# Data Pipeline Configuration
+
+database:
+  host: localhost
+  port: 5432
+  name: energy_forecast
+  user: postgres
+
+data:
+  output_dir: experiments/main/data
+  filename_prefix: tft_training_data
+
+features:
+  temporal:
+    - hour_sin
+    - hour_cos
+    - dow_sin
+    - dow_cos
+    - month_sin
+    - month_cos
+  weather:
+    - temperature
+    - heating_demand
+    - heating_demand_sq
+  demand_lags:
+    - demand_lag_24h_norm
+    - demand_lag_168h_norm
