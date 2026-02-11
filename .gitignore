@@ -102,7 +102,6 @@ experiments/
 *.deb
 .DS_Store
 Thumbs.db
-requirements-full.txt
 
 # Documentation build
 docs/_build/

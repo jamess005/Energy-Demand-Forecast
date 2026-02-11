@@ -1,0 +1,57 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.venv
+venv
+env
+.pytest_cache
+.mypy_cache
+*.egg-info
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Data files (too large for image)
+raw_files
+*.csv
+!requirements*.txt
+*.pkl
+*.parquet
+
+# Jupyter
+.ipynb_checkpoints
+
+# Training artifacts
+training/checkpoints
+training/lightning_logs
+training/models
+training/results
+training/*.csv
+src/api/lightning_logs
+
+# Experiments (mount at runtime instead)
+experiments
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Documentation
+docs
+*.md
+LICENSE

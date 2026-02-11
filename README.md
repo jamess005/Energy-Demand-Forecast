@@ -240,6 +240,7 @@ Production approach would incorporate:
 Energy-Demand-Forecaster/
 ├── src/
 │   ├── api/                    # Forecasting API
+│   │   ├── main.py            # FastAPI application
 │   │   ├── forecast.py        # Main forecasting script
 │   │   ├── prepare_data.py    # Data loading & feature generation
 │   │   └── bias_correction.py # Systematic bias correction
@@ -247,15 +248,19 @@ Energy-Demand-Forecaster/
 │       ├── feeds/             # Live data collection
 │       │   ├── entsoe_feed.py    # ENTSO-E demand data
 │       │   ├── weather_feed.py   # Open-Meteo weather
-│       │   └── holidays_feed.py  # German holidays
+│       │   ├── holidays_feed.py  # German holidays
+│       │   └── run_all_feeds.py  # Pipeline orchestrator
 │       ├── processing/        # Feature engineering modules
 │       └── validation/        # Data quality checks
 ├── training/
 │   ├── train.py              # Model training script
 │   └── evaluate.py           # Model evaluation
 ├── config/                   # YAML configuration files
+├── scripts/                  # Database initialization scripts
 ├── docker-compose.yml        # PostgreSQL + optional API service
 ├── Dockerfile                # Container definition
+├── .dockerignore             # Docker build exclusions
+├── .env.example              # Environment variable template
 ├── requirements.txt          # Production dependencies
 └── README.md
 ```

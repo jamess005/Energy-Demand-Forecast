@@ -8,6 +8,8 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import argparse
 import warnings
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 import torch
@@ -46,10 +48,10 @@ def load_model(model_path: Path):
     return model
 
 
-def forecast(hours: int = 24, forecast_from_date: str = None, apply_correction: bool = True) -> pd.DataFrame:
+def forecast(hours: int = 24, forecast_from_date: Optional[str] = None, apply_correction: bool = True) -> pd.DataFrame:
     """Generate demand forecast."""
     model = load_model(MODEL_PATH)
-    encoder_length = model.hparams.max_encoder_length
+    encoder_length: int = model.hparams.max_encoder_length  # type: ignore[union-attr]
     model_features = extract_model_features(model)
     
     engine = get_db_engine()
@@ -96,7 +98,7 @@ def forecast(hours: int = 24, forecast_from_date: str = None, apply_correction: 
     with torch.no_grad():
         predictions = model.predict(pred_loader, mode='prediction')
     
-    preds = predictions.cpu().numpy()
+    preds = predictions.cpu().numpy()  # type: ignore[union-attr]
     last_preds = preds[-1] if len(preds.shape) > 1 else preds
     last_preds = last_preds[:hours]
     

@@ -9,6 +9,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from forecast import forecast, MODEL_PATH
 
@@ -64,7 +65,7 @@ async def health_check():
         from prepare_data import get_db_engine
         engine = get_db_engine()
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
         db_connected = True
     except Exception:
         pass

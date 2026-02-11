@@ -160,13 +160,13 @@ def generate_predictions(model, dataset, df: pd.DataFrame) -> pd.DataFrame:
             ts_start = df.loc[start_idx, 'timestamp']
             
             for h in range(PREDICTION_LENGTH):
-                ts = ts_start + pd.Timedelta(hours=h)
+                ts = ts_start + pd.Timedelta(hours=h)  # type: ignore[operator]
                 results.append({
                     'timestamp': ts,
-                    'hour': ts.hour,
-                    'dow': ts.dayofweek,
-                    'month': ts.month,
-                    'week': ts.isocalendar()[1],
+                    'hour': ts.hour,  # type: ignore[union-attr]
+                    'dow': ts.dayofweek,  # type: ignore[union-attr]
+                    'month': ts.month,  # type: ignore[union-attr]
+                    'week': ts.isocalendar()[1],  # type: ignore[union-attr]
                     'horizon': h + 1,
                     'predicted': pred_values[pred_idx, h],
                     'actual': actuals[i, h],

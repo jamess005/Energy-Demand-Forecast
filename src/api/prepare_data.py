@@ -25,7 +25,7 @@ def get_db_engine():
     )
 
 
-def load_historical_data(engine, end_date: str = None, limit: int = 1000) -> pd.DataFrame:
+def load_historical_data(engine, end_date: str | None = None, limit: int = 1000) -> pd.DataFrame:
     """Load raw historical data from database."""
     date_filter = ""
     if end_date:
@@ -63,10 +63,10 @@ def generate_features(df: pd.DataFrame) -> pd.DataFrame:
     """Generate all features from raw data."""
     df = df.copy()
     
-    df['hour'] = df['timestamp'].dt.hour
-    df['dow'] = df['timestamp'].dt.dayofweek
-    df['month'] = df['timestamp'].dt.month
-    df['year'] = df['timestamp'].dt.year
+    df['hour'] = df['timestamp'].dt.hour  # type: ignore[union-attr]
+    df['dow'] = df['timestamp'].dt.dayofweek  # type: ignore[union-attr]
+    df['month'] = df['timestamp'].dt.month  # type: ignore[union-attr]
+    df['year'] = df['timestamp'].dt.year  # type: ignore[union-attr]
     
     # Cyclic encodings
     df['hour_sin'] = np.sin(2 * np.pi * df['hour'] / 24)
