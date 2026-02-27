@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from forecast import forecast, MODEL_PATH
+from forecast import forecast, MODEL_DIR, _find_best_checkpoint
 
 
 class ForecastRequest(BaseModel):
@@ -58,7 +58,7 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Check API health status."""
-    model_loaded = MODEL_PATH.exists()
+    model_loaded = any(MODEL_DIR.glob('tft-*.ckpt'))
     db_connected = False
     
     try:
@@ -117,7 +117,7 @@ async def generate_forecast(request: ForecastRequest):
         return ForecastResponse(
             forecasts=forecasts,
             generated_at=datetime.utcnow(),
-            model_version=MODEL_PATH.stem.split('-')[1],
+            model_version=_find_best_checkpoint().stem,
             bias_correction_applied=has_correction,
         )
         

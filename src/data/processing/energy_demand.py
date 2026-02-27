@@ -1,3 +1,7 @@
+"""LEGACY: One-time CSV loader for energy demand data.
+Superseded by src/data/feeds/entsoe_feed.py for ongoing data collection.
+Kept for reference only."""
+
 import pandas as pd
 from sqlalchemy import create_engine
 from dotenv import load_dotenv

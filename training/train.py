@@ -21,6 +21,7 @@ import pandas as pd
 import torch
 import lightning.pytorch as pl
 import warnings
+from typing import cast
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint, Callback
 from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer
 from pytorch_forecasting.data import GroupNormalizer
@@ -95,25 +96,29 @@ def create_datasets(df: pd.DataFrame):
     
     print(f"Data: {len(df):,} | Train: {len(train_df):,} | Val: {len(val_df):,} | Test: {len(df) - val_end:,}")
     
+    # 30-feature FINAL_SET from Ridge regression walk-forward CV
+    # (notebooks/02_feature_engineering.ipynb) — leakage-free
     features = [
-        'hour_sin', 'hour_cos', 'dow_sin', 'month_cos',
+        # Hourly cycle
+        'hour_sin', 'hour_cos',
+        # Weekly cycle — dummies
         'dow_0', 'dow_1', 'dow_2', 'dow_3', 'dow_4', 'dow_5', 'dow_6',
-        'is_weekend', 'is_weekday', 'is_public_holiday',
+        # Annual cycle
+        'month_sin', 'month_cos',
+        # Calendar
+        'is_public_holiday',
         'is_monday_after_weekend', 'is_friday_before_weekend',
-        'is_early_morning', 'is_morning_ramp', 'is_night',
-        'day_transition_type', 'is_peak_hour', 'is_valley_hour', 'hour_squared',
-        'daylight_savings_winter', 'daylight_savings_summer',
-        'temperature', 'heating_demand', 'heating_demand_sq',
-        'temp_severity', 'heating_demand_log', 'monday_cold_multiplier', 'is_cold',
-        'regime_0', 'regime_1', 'regime_2', 'regime_3',
-        'demand_lag_24h_norm', 'demand_lag_168h_norm', 'demand_delta_24h',
-        'demand_lag_ratio', 'lag_reliability', 'demand_lag_adjusted',
-        'transition_adjustment', 'demand_rolling_std_7d',
+        'day_transition_type', 'is_weekend',
+        # Weather
+        'heating_demand', 'temp_lag_24h',
+        'humidity', 'rain', 'snowfall',
+        # Demand lags (leakage-free)
+        'demand_lag_24h_norm', 'demand_lag_168h_norm',
+        'demand_delta_24h', 'demand_rolling_std_7d',
+        # Lag day-type context
         'lag_24h_was_weekend', 'lag_168h_was_weekend',
-        'demand_lag_24h_sq', 'demand_lag_168h_sq', 'demand_lag_24h_log', 'temp_lag_24h',
-        'peak_lag_interaction', 'peak_heating_interaction', 'weekend_temp_interaction',
-        'heating_hour_cos_product', 'temp_lag_ratio_interaction',
-        'night_temp_interaction', 'weekend_transition_temp', 'dow_sin_temp',
+        # Interactions
+        'heating_hour_cos_product', 'weekend_temp_interaction', 'dow_sin_temp',
     ]
     
     training = TimeSeriesDataSet(
@@ -145,7 +150,7 @@ def create_datasets(df: pd.DataFrame):
 
 def create_model(training: TimeSeriesDataSet) -> TemporalFusionTransformer:
     """Create TFT model."""
-    return TemporalFusionTransformer.from_dataset(
+    return cast(TemporalFusionTransformer, TemporalFusionTransformer.from_dataset(
         training,
         learning_rate=LEARNING_RATE,
         hidden_size=HIDDEN_SIZE,
@@ -161,7 +166,7 @@ def create_model(training: TimeSeriesDataSet) -> TemporalFusionTransformer:
         reduce_on_plateau_min_lr=LR_MIN,
         log_interval=-1,
         log_val_interval=1,
-    )
+    ))
 
 
 class TrainingMonitor(Callback):
@@ -179,7 +184,7 @@ class TrainingMonitor(Callback):
         if trainer.sanity_checking:
             return
         
-        elapsed = time.time() - self.epoch_start
+        elapsed = time.time() - (self.epoch_start or time.time())
         logs = trainer.callback_metrics
         
         train_loss = float(logs.get('train_loss_epoch', logs.get('train_loss', 0)))

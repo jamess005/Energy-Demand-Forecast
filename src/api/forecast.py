@@ -19,18 +19,33 @@ from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 from pytorch_forecasting.data import GroupNormalizer
 
 from prepare_data import get_db_engine, load_historical_data, generate_features, generate_future_features, ensure_model_features
-
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent / 'models'))
 from bias_correction import apply_bias_correction
 
 warnings.filterwarnings('ignore')
 torch.set_float32_matmul_precision('medium')
 
 BASE_DIR = Path(__file__).parent.parent.parent
-MODEL_PATH = BASE_DIR / 'experiments/main/model/tft-main.ckpt'
+MODEL_DIR = BASE_DIR / 'training' / 'models'
 PREDICTION_LENGTH = 24
 USE_BIAS_CORRECTION = True
+
+
+def _find_best_checkpoint() -> Path:
+    """Find best model checkpoint (lowest val_MAE in filename)."""
+    ckpts = sorted(MODEL_DIR.glob('tft-*.ckpt'))
+    if not ckpts:
+        raise FileNotFoundError(f"No model checkpoints in {MODEL_DIR}. Run train.py first.")
+    # Parse val_MAE from filename pattern 'tft-v1-{epoch}-{val_MAE}.ckpt'
+    best, best_mae = ckpts[0], float('inf')
+    for p in ckpts:
+        parts = p.stem.split('-')
+        try:
+            mae = float(parts[-1])
+            if mae < best_mae:
+                best, best_mae = p, mae
+        except (ValueError, IndexError):
+            continue
+    return best
 
 
 def extract_model_features(model) -> list:
@@ -50,7 +65,8 @@ def load_model(model_path: Path):
 
 def forecast(hours: int = 24, forecast_from_date: Optional[str] = None, apply_correction: bool = True) -> pd.DataFrame:
     """Generate demand forecast."""
-    model = load_model(MODEL_PATH)
+    model_path = _find_best_checkpoint()
+    model = load_model(model_path)
     encoder_length: int = model.hparams.max_encoder_length  # type: ignore[union-attr]
     model_features = extract_model_features(model)
     
@@ -126,7 +142,7 @@ def main():
     
     print(f"\n{'='*60}")
     print(f"FORECAST: {args.hours} hours from {args.date or 'latest data'}")
-    print(f"Model: {MODEL_PATH.stem}")
+    print(f"Model: {_find_best_checkpoint().stem}")
     print(f"{'='*60}\n")
     
     if 'corrected_demand' in results.columns:

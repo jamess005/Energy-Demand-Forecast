@@ -1,3 +1,7 @@
+"""LEGACY: One-time bulk loader for holiday data (2019-2020).
+Superseded by src/data/feeds/holidays_feed.py for ongoing data collection.
+Kept for reference only."""
+
 import http.client
 import json
 import pandas as pd

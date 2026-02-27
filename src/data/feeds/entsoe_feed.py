@@ -4,7 +4,7 @@ Fetches live electricity demand data for Germany.
 Unavailability data is set to zeros (API data unreliable/corrupted).
 """
 import pandas as pd
-from entsoe import EntsoePandasClient
+from entsoe.entsoe import EntsoePandasClient
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 import os
@@ -185,7 +185,10 @@ def main():
     
     # Step 2: Fetch demand data
     print("\n[2/4] Fetching demand data...")
-    client = EntsoePandasClient(api_key=os.getenv('ENTSOE_API_KEY'))
+    api_key = os.getenv('ENTSOE_API_KEY')
+    if not api_key:
+        raise EnvironmentError("ENTSOE_API_KEY not found in environment")
+    client = EntsoePandasClient(api_key=api_key)
     
     end_date = pd.Timestamp.now(tz='UTC')
     start_date = end_date - pd.Timedelta(days=30)

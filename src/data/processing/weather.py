@@ -1,3 +1,7 @@
+"""LEGACY: One-time CSV loader for weather data.
+Superseded by src/data/feeds/weather_feed.py for ongoing data collection.
+Kept for reference only."""
+
 import pandas as pd
 from sqlalchemy import create_engine
 from dotenv import load_dotenv
