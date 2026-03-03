@@ -1,4 +1,4 @@
-# Energy Demand Forecasting with Temporal Fusion Transformer
+# Energy Demand Forecasting — LSTM Seq2Seq
 
 Hourly electricity demand forecasting for Germany using deep learning time-series models. Demonstrates end-to-end ML engineering: data pipeline automation, feature engineering, systematic bias correction, and model deployment.
 
@@ -8,48 +8,48 @@ Hourly electricity demand forecasting for Germany using deep learning time-serie
 
 ## Project Overview
 
-This system forecasts hourly electricity demand 24 hours ahead for Germany's power grid. It combines real-time API data collection, advanced feature engineering, and a Temporal Fusion Transformer model with empirical bias correction.
+This system forecasts hourly electricity demand 24 hours ahead for Germany's power grid. It combines real-time API data collection, advanced feature engineering, and an LSTM Seq2Seq model with Bahdanau attention and empirical bias correction.
 
 ### What It Does
 
-- **Data Collection**: Automated pipeline fetching demand (ENTSO-E), weather (Open-Meteo), and Nager.date data
-- **Feature Engineering**: 30+ temporal, weather, and lag features with rolling statistics
-- **24-Hour Forecasts**: Produces hourly predictions with ~1,270 MW MAE on validation data
-- **Bias Correction**: Systematic adjustment for identified weekday/weekend and evening patterns
+- **Data Collection**: Automated pipeline fetching demand (ENTSO-E), weather (Open-Meteo), and Nager.Date holiday data
+- **Feature Engineering**: 22 temporal, weather, and lag features with rolling statistics
+- **24-Hour Forecasts**: Produces hourly predictions with ~1,100 MW MAE (seasonal bias correction) on the held-out test set
+- **Bias Correction**: Two-stage adjustment (Hour×DoW and seasonal) targeting identified error patterns
 
 ### Key Components
 
-- **Temporal Fusion Transformer**: Multi-head attention with variable selection for time-series forecasting
-- **PostgreSQL Data Pipeline**: Normalized schema with automated duplicate detection and DST handling
-- **Advanced Feature Engineering**: Temporal encodings, lag features (24h and 168h), rolling statistics
-- **Empirical Bias Correction**: Hour-of-day and day-of-week adjustments based on error pattern analysis
+- **LSTM Seq2Seq with Bahdanau Attention**: Encoder-decoder architecture — decoder attends over all encoder hidden states at each decode step, trained end-to-end with standard backprop
+- **PostgreSQL Data Pipeline**: Normalised schema with automated duplicate detection and DST handling
+- **Feature Engineering**: Temporal encodings (sine/cosine), 168 h weekly lag, rolling statistics, weather interactions
+- **Empirical Bias Correction**: Two-stage adjustment for hour-of-day×day-of-week and seasonal error patterns based on residual analysis
 - **API Feeds**: Continuous data updates from ENTSO-E, Open-Meteo, and Nager.Date
 
 ## Why These Methods?
 
 The model initially showed systematic bias patterns despite good overall metrics:
 
-- **Evening underprediction**: Consistent -200 to -300 MW error during peak hours
-- **Weekday/weekend split**: Different error patterns between workdays and weekends
-- **96-hour encoder overfitting**: Full weekly context led to overfitting on weekly patterns
+- **Nocturnal and midday over-prediction**: +200 to +500 MW error during hours 0–4 and 10–13
+- **Weekday variation**: Fridays and Sundays most over-predicted; Wednesdays systematically under-predicted (up to −1,089 MW bias at H06)
+- **Seasonal drift**: Winter MAE (~1,375 MW) substantially higher than summer (~934 MW) due to heating demand volatility
 
 Engineering solutions compensate for these challenges:
 
-- **Empirical bias correction**: Statistical adjustments based on hour/day error patterns reduce systematic bias
-- **48-hour encoder window**: Shorter context (vs. 96h or 168h) improved generalization and reduced overfitting
-- **Evening-specific lag features**: Targeted feature engineering captures peak hour dynamics
-- **Removed day-ahead forecast**: Eliminated data leakage from features unavailable at inference time
+- **Empirical bias correction**: Statistical adjustments from hour×day residual patterns reduce mean bias from +209 MW to near zero
+- **Seasonal stratification**: Separate correction tables per (hour, day-of-week, season) reduce test MAE by ~93 MW vs raw LSTM
+- **96-hour encoder window**: Four-day historical context lets the model see structurally similar days in the lookback
+- **Weekly lag feature**: `demand_lag_168h_norm` gives explicit access to the same hour one week earlier — the strongest single predictor
 
-With more diverse training data or longer training horizons, some corrections could be relaxed. The current approach ensures reliable predictions despite model limitations.
+With more diverse training data or a dedicated holiday-demand module, seasonal variance could be reduced further.
 
 ## Technical Stack
 
 ```
-ENTSO-E + Open-Meteo + Nager.Date → PostgreSQL → Feature Engineering → TFT (PyTorch) → Bias Correction → 24h Forecast
+ENTSO-E + Open-Meteo + Nager.Date → PostgreSQL → Feature Engineering → LSTM Seq2Seq → Bias Correction → 24h Forecast
 ```
 
-**Model**: Temporal Fusion Transformer (48h encoder, 24h prediction)  
-**Database**: PostgreSQL with normalized time-series schema  
+**Model**: LSTM Seq2Seq with Bahdanau attention (96 h encoder, 24 h prediction)  
+**Database**: PostgreSQL with normalised time-series schema  
 **Framework**: PyTorch Lightning with gradient clipping and early stopping  
 **Data Pipeline**: Automated API feeds with retry logic and duplicate detection  
 **Deployment**: Docker Compose with FastAPI service (optional)
@@ -58,12 +58,16 @@ ENTSO-E + Open-Meteo + Nager.Date → PostgreSQL → Feature Engineering → TFT
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| **MAE** | 1,270 MW | Mean absolute error on validation set |
-| **Encoder Window** | 48 hours | Historical context for predictions |
+| **Val MAE** | 1,364 MW | Validation set (Sep 2024 – Jun 2025), epoch 8 checkpoint |
+| **Test MAE (raw)** | ~1,200 MW | Held-out test set (Jun 2025 – Mar 2026), 100-window sample |
+| **Test MAE (seasonal corrected)** | ~1,100 MW | Same test set, seasonal bias correction applied |
+| **Encoder Window** | 96 hours | Historical context for predictions |
 | **Forecast Horizon** | 24 hours | Hourly predictions |
-| **Training Data** | 2019-2025 | ~6 years of historical data |
+| **Training Data** | 2019–2025 | ~63,000 hourly observations |
+| **Best month** | ~873 MW | July 2025 (summer, stable demand) |
+| **Worst month** | ~1,568 MW | January 2026 (post-holiday demand spikes) |
 
-**Bias Correction Impact**: Reduces systematic evening underprediction by 200-300 MW and corrects weekday/weekend error patterns.
+**Bias Correction Impact**: Seasonal correction reduces mean bias from +209 MW to +12 MW and lowers test MAE by ~93 MW. Hour×DoW correction alone gives −46 MW; seasonal adds a further −47 MW on top.
 
 ## Installation & Usage
 
@@ -131,53 +135,79 @@ Output includes predicted demand (MW), bias corrections, timestamp range, and fo
 
 ## Training Details
 
-**Model**: Temporal Fusion Transformer  
+**Model**: LSTM Seq2Seq with Bahdanau attention  
 **Hardware**: AMD Radeon RX 7800 XT  
-**Training Time**: ~20-30 epochs to convergence  
+**Convergence**: Epoch 8 (early stopping, patience 10)  
+**Hyperparameter search**: 100-trial Optuna cold-start sweep on epoch-1 validation MAE
 
-**Hyperparameters**:
-- Hidden size: 32
-- Attention heads: 4
-- Dropout: 0.3
-- Learning rate: 0.0001 (with cosine decay)
-- Batch size: 512
-- Encoder length: 48 hours
-- Prediction length: 24 hours
+**Best-run Hyperparameters** (Optuna trial 78):
 
-**Dataset**:
-- Training split: 80%
-- Validation split: 10%
-- Test split: 10%
-- Total records: ~52,000 hourly observations (2019-2025)
+| Parameter | Value |
+|-----------|-------|
+| Encoder length | 96 h |
+| Decoder / forecast length | 24 h |
+| Hidden size | 288 |
+| LSTM layers | 1 |
+| Dropout | 0.15 |
+| Batch size | 128 |
+| Learning rate | 1.875 × 10⁻³ |
+| Weight decay | 3.565 × 10⁻⁴ |
+| Gradient clip | 1.28 |
+| LR scheduler | ReduceLROnPlateau (factor 0.5, patience 6) |
+
+**Dataset splits**:
+- Training: 80% (2019-01 – 2024-09)
+- Validation: 10% (2024-09 – 2025-06)
+- Test: 10% (2025-06 – 2026-03)
 
 ## Feature Engineering
 
-The model uses 30+ engineered features across multiple categories:
+The model uses **22 engineered features** across four categories:
 
-        'hour_sin', 'hour_cos', 'dow_sin', 'month_cos',
-        'dow_0', 'dow_1', 'dow_2', 'dow_3', 'dow_4', 'dow_5', 'dow_6',
-        'is_weekend', 'is_weekday', 'is_public_holiday',
-        'is_monday_after_weekend', 'is_friday_before_weekend',
-        'is_early_morning', 'is_morning_ramp', 'is_night',
-        'day_transition_type', 'is_peak_hour', 'is_valley_hour', 'hour_squared',
-        'daylight_savings_winter', 'daylight_savings_summer',
-        'temperature', 'heating_demand', 'heating_demand_sq',
-        'temp_severity', 'heating_demand_log', 'monday_cold_multiplier', 'is_cold',
-        'regime_0', 'regime_1', 'regime_2', 'regime_3',
-        'demand_lag_24h_norm', 'demand_lag_168h_norm', 'demand_delta_24h',
-        'demand_lag_ratio', 'lag_reliability', 'demand_lag_adjusted',
-        'transition_adjustment', 'demand_rolling_std_7d',
-        'lag_24h_was_weekend', 'lag_168h_was_weekend',
-        'demand_lag_24h_sq', 'demand_lag_168h_sq', 'demand_lag_24h_log', 'temp_lag_24h',
-        'peak_lag_interaction', 'peak_heating_interaction', 'weekend_temp_interaction',
-        'heating_hour_cos_product', 'temp_lag_ratio_interaction',
-        'night_temp_interaction', 'weekend_transition_temp', 'dow_sin_temp'
+**Temporal encodings** (smooth circular representation):
+
+| Feature | Description |
+|---------|-------------|
+| `hour_sin`, `hour_cos` | Hour of day as sine/cosine pair |
+| `month_sin`, `month_cos` | Month of year as sine/cosine pair |
+| `dow_0` … `dow_6` | One-hot day-of-week (Mon=0, Sun=6) |
+
+**Calendar flags**:
+
+| Feature | Description |
+|---------|-------------|
+| `is_public_holiday` | German national holiday (Nager.Date) |
+| `is_weekend` | Saturday or Sunday indicator |
+
+**Weather & demand drivers**:
+
+| Feature | Description |
+|---------|-------------|
+| `heating_demand` | Degrees below 15 °C threshold (HDD proxy) |
+| `temp_lag_24h` | Air temperature 24 hours prior |
+| `humidity` | Relative humidity (%) |
+| `rain` | Precipitation (mm/h) |
+| `snowfall` | Snowfall (cm/h) |
+
+**Lag & rolling statistics**:
+
+| Feature | Description |
+|---------|-------------|
+| `demand_lag_168h_norm` | Normalised demand exactly one week prior — strongest single predictor |
+| `demand_rolling_std_7d` | 7-day rolling demand std dev (regime / volatility signal) |
+
+**Cross-feature interactions**:
+
+| Feature | Description |
+|---------|-------------|
+| `heating_hour_cos_product` | `heating_demand × hour_cos` — cold-morning peak interaction |
+| `weekend_temp_interaction` | Weekend flag × temperature — weekend demand is more temp-sensitive |
 
 ## Data Sources
 
 | Source | Data Type | Update Frequency | API |
 |--------|-----------|------------------|-----|
-| ENTSO-E | Actual demand, day-ahead forecasts | Hourly | [Transparency Platform](https://transparency.entsoe.eu/) |
+| ENTSO-E | Actual demand | Hourly | [Transparency Platform](https://transparency.entsoe.eu/) |
 | Open-Meteo | Temperature, humidity, precipitation | Hourly | [Archive API](https://open-meteo.com/) |
 | Nager.Date | German public holidays | Annual | [Holiday API](https://date.nager.at/) |
 
@@ -185,31 +215,27 @@ The model uses 30+ engineered features across multiple categories:
 
 The model struggles with:
 
-- **Novel patterns**: Performance degrades for unprecedented demand spikes (e.g., extreme weather events)
-- **Multi-week forecasts**: Accuracy drops significantly beyond 48-hour horizon
-- **Rapid industrial shifts**: Slow to adapt to sudden changes in baseload consumption
-
-These limitations stem from:
-- **Training data constraints**: 6 years of history may not capture rare events or long-term trends
-- **Static feature set**: Model doesn't incorporate supplementary factors such as energy price
-- **Fixed encoder window**: 48-hour context may miss longer-term seasonal patterns
-- **Abnormally warm temperatures**: Record breaking temerature with especially warm winters causing bias
+- **Holiday demand patterns**: The binary `is_public_holiday` flag is insufficient for post-holiday demand rebounds. Jan 7, 2026 (day after New Year, demand ~65 GW) had MAE of ~5,346 MW; Dec 30, 2025 (holiday week, ~50 GW) had ~4,028 MW
+- **Wednesday anomaly**: Raw predictions consistently under-forecast mid-week demand (bias up to −1,089 MW at H06×Wed), suggesting the model misses a mid-week demand recovery pattern
+- **Winter volatility**: Cold snaps cause demand spikes the 96-hour lookback doesn't always capture; January test MAE ~1,568 MW
+- **Fixed feature set**: Model does not incorporate energy prices, industrial shutdowns, or probabilistic weather forecasts
 
 A production system would benefit from:
-- Extended training data (10+ years)
-- Incorporation of wider factors to explain sepcific patterns
-- Ensemble methods combining multiple forecast horizons
+- A dedicated holiday-proximity feature (e.g. `days_since_holiday`, `days_to_holiday`)
+- Extended training data (10+ years) to encounter more rare events
+- Ensemble combining LSTM with gradient boosted trees for holiday cells
+- Continuous online recalibration of bias tables
 
 ## What This Demonstrates
 
 This portfolio piece shows practical ML engineering skills:
 
 1. **End-to-end ML pipeline**: Data collection → feature engineering → model training → inference
-2. **Error analysis & correction**: Identified systematic bias through residual analysis, implemented empirical fixes
-3. **Production-ready code**: Automated data feeds, error handling, duplicate detection, logging
-4. **Database design**: Normalized PostgreSQL schema for time-series data with proper indexing
-5. **API integration**: Resilient data fetching from ENTSO-E, Open-Meteo, and Nager.Date APIs
-6. **Hyperparameter tuning**: Iterative refinement from 96h encoder (overfitting) to 48h (optimal)
+2. **Error analysis & correction**: Identified systematic bias through residual analysis, implemented two-stage empirical fixes
+3. **Hyperparameter optimisation**: 100-trial Optuna sweep with cold-start proxy metric, converging to hidden_size=288, lr=1.875e-3
+4. **Production-ready code**: Automated data feeds, error handling, duplicate detection, logging
+5. **Database design**: Normalised PostgreSQL schema for time-series data with proper indexing
+6. **API integration**: Resilient data fetching from ENTSO-E, Open-Meteo, and Nager.Date APIs
 
 This represents a real-world ML engineering workflow: time-series forecasting with imperfect data, systematic debugging, and practical engineering to produce reliable outputs.
 
@@ -218,17 +244,17 @@ This represents a real-world ML engineering workflow: time-series forecasting wi
 ### If Deploying to Production
 
 - **Continuous retraining**: Automated model updates as new data accumulates
-- **Ensemble forecasting**: Combine TFT with XGBoost/LightGBM for robust predictions
+- **Ensemble forecasting**: Combine LSTM with XGBoost/LightGBM for robust predictions
 - **Multi-region expansion**: Extend beyond Germany to other European power markets
 - **Real-time API**: FastAPI service for on-demand forecasts with authentication
 - **Monitoring dashboard**: Track prediction accuracy, data pipeline health, model drift
 
 ### Architecture Enhancements
 
-Current approach: Single TFT model with post-hoc bias correction.
+Current approach: Single LSTM Seq2Seq model with post-hoc bias correction.
 
 Production approach would incorporate:
-1. **Multi-model ensemble**: TFT + gradient boosted trees + ARIMA for complementary strengths
+1. **Multi-model ensemble**: LSTM + gradient boosted trees + ARIMA for complementary strengths
 2. **Online learning**: Incremental model updates without full retraining
 3. **Uncertainty quantification**: Prediction intervals using quantile regression
 4. **Explainability tools**: SHAP values for feature importance tracking
@@ -253,10 +279,13 @@ Energy-Demand-Forecaster/
 │       ├── processing/        # Feature engineering modules
 │       └── validation/        # Data quality checks
 ├── training/
-│   ├── train.py              # Model training script
-│   └── evaluate.py           # Model evaluation
+│   ├── train.py              # LSTM Seq2Seq model & training script
+│   └── models/               # Saved checkpoints, scalers, bias tables
+├── notebooks/
+│   ├── 02_feature_engineering.ipynb  # Feature exploration & validation
+│   └── 03_model_evaluation.ipynb     # Full error analysis & bias correction
 ├── config/                   # YAML configuration files
-├── scripts/                  # Database initialization scripts
+├── scripts/                  # Database initialisation scripts
 ├── docker-compose.yml        # PostgreSQL + optional API service
 ├── Dockerfile                # Container definition
 ├── .dockerignore             # Docker build exclusions
@@ -281,7 +310,7 @@ ENTSOE_API_KEY=your_key_here
 ```
 
 **YAML Configs** (`config/`):
-- `model_config.yaml`: TFT hyperparameters and training settings
+- `model_config.yaml`: Model hyperparameters and training settings
 - `data_config.yaml`: Feature definitions and database connection
 - `api_config.yaml`: API server configuration and CORS settings
 
@@ -289,18 +318,18 @@ ENTSOE_API_KEY=your_key_here
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgements
 
 - **ENTSO-E**: Transparency Platform for electricity demand data
 - **Open-Meteo**: Weather archive API
 - **Nager.Date**: German holiday calendar
-- **PyTorch Forecasting**: TFT implementation and utilities
+- **PyTorch Lightning**: Training framework and checkpointing utilities
 
 ## Contact
 
-**James Scott** - Machine Learning Engineer  
+**James Scott** — Machine Learning Engineer  
 [GitHub](https://github.com/jamess005) | [LinkedIn](https://www.linkedin.com/in/jamesscott005)
 
 ---
