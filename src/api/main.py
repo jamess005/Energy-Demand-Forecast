@@ -42,8 +42,8 @@ class HealthResponse(BaseModel):
 
 app = FastAPI(
     title="Energy Demand Forecast API",
-    description="24-hour ahead energy demand forecasting using Temporal Fusion Transformer",
-    version="2.0.0",
+    description="24-hour ahead energy demand forecasting using LSTM Seq2Seq with Bahdanau Attention",
+    version="3.0.0",
 )
 
 app.add_middleware(
@@ -58,7 +58,7 @@ app.add_middleware(
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
     """Check API health status."""
-    model_loaded = any(MODEL_DIR.glob('tft-*.ckpt'))
+    model_loaded = any(MODEL_DIR.glob('lstm-*.ckpt'))
     db_connected = False
     
     try:

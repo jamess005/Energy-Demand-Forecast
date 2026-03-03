@@ -21,25 +21,36 @@ env
 *.swo
 
 # Data files (too large for image)
-raw_files
+raw_files/
 *.csv
 !requirements*.txt
 *.pkl
 *.parquet
 
-# Jupyter
-.ipynb_checkpoints
+# Jupyter notebooks & checkpoints
+notebooks/
+.ipynb_checkpoints/
 
-# Training artifacts
-training/checkpoints
-training/lightning_logs
-training/models
-training/results
+# Training artifacts (large files)
+training/checkpoints/
+training/lightning_logs/
+training/results/
 training/*.csv
-src/api/lightning_logs
+training/models/*.ckpt
+training/models/*.pkl
+# JSON model artefacts are INCLUDED (needed by API)
 
-# Experiments (mount at runtime instead)
-experiments
+# Checkpoints directory
+checkpoints/
+
+# Lightning logs
+lightning_logs/
+
+# API logs
+src/api/lightning_logs/
+
+# Experiments
+experiments/
 
 # Docker
 docker-compose.yml
@@ -48,6 +59,16 @@ Dockerfile
 
 # Environment
 .env
+.env.*
+!.env.example
+
+# Documentation & misc
+README.md
+LICENSE
+docs/
+*.log
+*.tmp
+*.bak
 .env.*
 !.env.example
 

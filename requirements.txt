@@ -26,3 +26,7 @@ retry-requests>=2.0
 # Visualization (training/evaluation)
 matplotlib>=3.7
 seaborn>=0.13
+
+# Statistical analysis (notebooks)
+statsmodels>=0.14
+scipy>=1.11

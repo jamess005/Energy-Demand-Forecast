@@ -1,160 +1,208 @@
 """
-Energy Demand Forecasting Pipeline
+Energy Demand Forecasting Pipeline — LSTM Seq2Seq v2
+
+Loads the LSTM model, feature scaler, and normalisation stats from the
+training/models directory.  Generates 24h-ahead forecasts with optional
+bias correction.
 """
 
-import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-
 import argparse
+import json
+import re
+import sys
 import warnings
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 import torch
-from pathlib import Path
-
-from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
-from pytorch_forecasting.data import GroupNormalizer
-
-from prepare_data import get_db_engine, load_historical_data, generate_features, generate_future_features, ensure_model_features
-from bias_correction import apply_bias_correction
 
 warnings.filterwarnings('ignore')
 torch.set_float32_matmul_precision('medium')
 
-BASE_DIR = Path(__file__).parent.parent.parent
-MODEL_DIR = BASE_DIR / 'training' / 'models'
-PREDICTION_LENGTH = 24
+BASE_DIR   = Path(__file__).parent.parent.parent
+MODEL_DIR  = BASE_DIR / 'training' / 'models'
+TRAIN_DIR  = BASE_DIR / 'training'
+
+# Add training/ and src/api/ to path so we can import model & API classes
+sys.path.insert(0, str(TRAIN_DIR))
+sys.path.insert(0, str(Path(__file__).parent))
+
+from train import (                        # noqa: E402
+    LSTMSeq2Seq, HParams, FeatureScaler,
+    ALL_FEATURES, DECODER_FEATURES,
+    ENCODER_FEATURE_DIM, DECODER_FEATURE_DIM,
+    DEFAULT_HP,
+)
+from prepare_data import (                 # noqa: E402
+    get_db_engine, load_historical_data,
+    generate_features, generate_future_features,
+    ensure_model_features,
+)
+from bias_correction import apply_bias_correction  # noqa: E402
+
+PREDICTION_LENGTH  = 24
 USE_BIAS_CORRECTION = True
 
 
+# ── Model discovery ──────────────────────────────────────────────────────────
+
 def _find_best_checkpoint() -> Path:
-    """Find best model checkpoint (lowest val_MAE in filename)."""
-    ckpts = sorted(MODEL_DIR.glob('tft-*.ckpt'))
+    """Find the LSTM checkpoint with the lowest val_MAE in its filename."""
+    ckpts = sorted(MODEL_DIR.glob('lstm-*.ckpt'))
     if not ckpts:
-        raise FileNotFoundError(f"No model checkpoints in {MODEL_DIR}. Run train.py first.")
-    # Parse val_MAE from filename pattern 'tft-v1-{epoch}-{val_MAE}.ckpt'
+        raise FileNotFoundError(
+            f"No LSTM checkpoints in {MODEL_DIR}. Run training/train.py first."
+        )
     best, best_mae = ckpts[0], float('inf')
     for p in ckpts:
-        parts = p.stem.split('-')
-        try:
-            mae = float(parts[-1])
+        m = re.search(r'val_MAE=(\d+)', p.stem)
+        if m:
+            mae = int(m.group(1))
             if mae < best_mae:
                 best, best_mae = p, mae
-        except (ValueError, IndexError):
-            continue
     return best
 
 
-def extract_model_features(model) -> list:
-    """Extract required feature names from model checkpoint."""
-    exclude = {'encoder_length', 'target_demand_center', 'target_demand_scale', 'relative_time_idx'}
-    return [f for f in model.hparams.x_reals if f not in exclude]
+# ── Model & artefact loading ─────────────────────────────────────────────────
 
+def _load_artefacts():
+    """Load norm stats, feature scaler, and the LSTM model."""
+    # Norm stats (demand mean/std)
+    with open(MODEL_DIR / 'lstm_norm_stats.json') as f:
+        ns = json.load(f)
+    demand_mean = ns['demand_mean']
+    demand_std  = ns['demand_std']
 
-def load_model(model_path: Path):
-    """Load TFT model from checkpoint."""
-    model = TemporalFusionTransformer.load_from_checkpoint(model_path)
-    model.eval()
-    if torch.cuda.is_available():
-        model.cuda()
-    return model
+    # Feature scaler
+    with open(MODEL_DIR / 'lstm_feature_scaler.json') as f:
+        sc = json.load(f)
+    scaler = FeatureScaler()
+    scaler.means = sc['means']
+    scaler.stds  = sc['stds']
 
-
-def forecast(hours: int = 24, forecast_from_date: Optional[str] = None, apply_correction: bool = True) -> pd.DataFrame:
-    """Generate demand forecast."""
-    model_path = _find_best_checkpoint()
-    model = load_model(model_path)
-    encoder_length: int = model.hparams.max_encoder_length  # type: ignore[union-attr]
-    model_features = extract_model_features(model)
-    
-    engine = get_db_engine()
-    historical_df = load_historical_data(engine, forecast_from_date, limit=encoder_length + 200)
-    historical_df = generate_features(historical_df)
-    
-    future_df = generate_future_features(historical_df, hours)
-    
-    keep_rows = min(len(historical_df), encoder_length + 200)
-    recent_hist = historical_df.tail(keep_rows).copy()
-    combined = pd.concat([recent_hist, future_df], ignore_index=True)
-    combined['time_idx'] = range(len(combined))
-    combined['group'] = 'Germany'
-    
-    combined = ensure_model_features(combined, model_features)
-    
-    if 'season' in combined.columns:
-        combined['season'] = combined['season'].astype(str)
-    
-    min_idx = len(combined) - hours - encoder_length
-    
-    pred_dataset = TimeSeriesDataSet(
-        combined[combined['time_idx'] >= min_idx],
-        time_idx='time_idx',
-        target='target_demand',
-        group_ids=['group'],
-        min_encoder_length=encoder_length,
-        max_encoder_length=encoder_length,
-        min_prediction_length=PREDICTION_LENGTH,
-        max_prediction_length=PREDICTION_LENGTH,
-        static_categoricals=['group'],
-        time_varying_known_categoricals=['season'] if 'season' in combined.columns else [],
-        time_varying_known_reals=model_features,
-        time_varying_unknown_reals=[],
-        target_normalizer=GroupNormalizer(groups=['group'], transformation='softplus', center=True),
-        add_relative_time_idx=True,
-        add_target_scales=True,
-        add_encoder_length=True,
-        allow_missing_timesteps=True,
+    # Hyperparams & model
+    hp = DEFAULT_HP
+    ckpt_path = _find_best_checkpoint()
+    model = LSTMSeq2Seq.load_from_checkpoint(
+        str(ckpt_path), hp=hp, demand_std=demand_std,
     )
-    
-    pred_loader = pred_dataset.to_dataloader(train=False, batch_size=1, num_workers=0)
-    
+    model.eval()
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+
+    return model, scaler, demand_mean, demand_std, hp, device, ckpt_path
+
+
+# ── Forecast generation ──────────────────────────────────────────────────────
+
+def forecast(
+    hours: int = 24,
+    forecast_from_date: Optional[str] = None,
+    apply_correction: bool = True,
+) -> pd.DataFrame:
+    """Generate demand forecast.
+
+    1. Load historical data from the database.
+    2. Build encoder context (96 h of known features + demand).
+    3. Build decoder context (24 h of known-future features).
+    4. Run the LSTM Seq2Seq model to get normalised predictions.
+    5. De-normalise to MW and optionally apply bias correction.
+    """
+    model, scaler, demand_mean, demand_std, hp, device, ckpt_path = (
+        _load_artefacts()
+    )
+    encoder_length = hp.encoder_length
+
+    # ── Pull data ────────────────────────────────────────────────────────────
+    engine = get_db_engine()
+    historical_df = load_historical_data(
+        engine, forecast_from_date, limit=encoder_length + 200,
+    )
+    historical_df = generate_features(historical_df)
+    future_df     = generate_future_features(historical_df, hours)
+
+    # We need encoder_length rows of history + hours rows of future
+    recent_hist = historical_df.tail(encoder_length).copy()
+    combined    = pd.concat([recent_hist, future_df], ignore_index=True)
+
+    # ── Ensure all required features exist ───────────────────────────────────
+    combined = ensure_model_features(combined, ALL_FEATURES)
+
+    # ── Normalise features ───────────────────────────────────────────────────
+    enc_feats = scaler.transform(combined, ALL_FEATURES)        # (N, 22)
+    dec_feats = scaler.transform(combined, DECODER_FEATURES)    # (N, 20)
+
+    # Normalised demand for encoder only (history window)
+    demand_vals = np.asarray(combined['target_demand'].values, dtype=np.float32)
+    demand_norm = ((demand_vals - demand_mean) / demand_std).reshape(-1, 1)
+
+    # Encoder input = [features, demand_norm]
+    enc_input = np.concatenate([enc_feats, demand_norm], axis=1)  # (N, 23)
+
+    # ── Build windows ────────────────────────────────────────────────────────
+    # Encoder window: first encoder_length rows (historical)
+    enc_x = torch.from_numpy(
+        enc_input[:encoder_length][np.newaxis]              # (1, enc_len, 23)
+    ).to(device)
+    # Decoder window: next hours rows (future)
+    dec_x = torch.from_numpy(
+        dec_feats[encoder_length : encoder_length + hours][np.newaxis]  # (1, hours, 20)
+    ).to(device)
+
+    # ── Inference ────────────────────────────────────────────────────────────
     with torch.no_grad():
-        predictions = model.predict(pred_loader, mode='prediction')
-    
-    preds = predictions.cpu().numpy()  # type: ignore[union-attr]
-    last_preds = preds[-1] if len(preds.shape) > 1 else preds
-    last_preds = last_preds[:hours]
-    
-    results = future_df[['timestamp']].copy()
-    results['predicted_demand'] = last_preds
-    
+        preds_norm = model(enc_x, dec_x)            # (1, hours)
+
+    preds_mw = preds_norm.cpu().numpy().flatten() * demand_std + demand_mean
+
+    # ── Build result DataFrame ───────────────────────────────────────────────
+    results = future_df[['timestamp']].head(hours).copy()
+    results['predicted_demand'] = preds_mw[:hours]
+
     if apply_correction and USE_BIAS_CORRECTION:
         results = apply_bias_correction(results)
-    
+
     return results
 
+
+# ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description='Generate energy demand forecast')
     parser.add_argument('--hours', type=int, default=24, help='Hours to forecast')
     parser.add_argument('--date', type=str, help='Forecast from date (DD/MM/YYYY)')
-    parser.add_argument('--no-correction', action='store_true', help='Disable bias correction')
+    parser.add_argument('--no-correction', action='store_true',
+                        help='Disable bias correction')
     args = parser.parse_args()
-    
+
     results = forecast(
-        hours=args.hours, 
-        forecast_from_date=args.date, 
-        apply_correction=not args.no_correction
+        hours=args.hours,
+        forecast_from_date=args.date,
+        apply_correction=not args.no_correction,
     )
-    
-    print(f"\n{'='*60}")
+
+    ckpt = _find_best_checkpoint()
+    print(f"\n{'=' * 60}")
     print(f"FORECAST: {args.hours} hours from {args.date or 'latest data'}")
-    print(f"Model: {_find_best_checkpoint().stem}")
-    print(f"{'='*60}\n")
-    
+    print(f"Model: {ckpt.stem}")
+    print(f"{'=' * 60}\n")
+
     if 'corrected_demand' in results.columns:
-        display = results[['timestamp', 'predicted_demand', 'bias_correction', 'corrected_demand']].copy()
+        display = results[['timestamp', 'predicted_demand',
+                           'bias_correction', 'corrected_demand']].copy()
         display.columns = ['Timestamp', 'Raw (MW)', 'Correction', 'Final (MW)']
-        print(f"Raw range: {results['predicted_demand'].min():.0f} - {results['predicted_demand'].max():.0f} MW")
-        print(f"Corrected range: {results['corrected_demand'].min():.0f} - {results['corrected_demand'].max():.0f} MW")
+        print(f"Raw range      : {results['predicted_demand'].min():.0f}"
+              f" – {results['predicted_demand'].max():.0f} MW")
+        print(f"Corrected range: {results['corrected_demand'].min():.0f}"
+              f" – {results['corrected_demand'].max():.0f} MW")
     else:
         display = results[['timestamp', 'predicted_demand']].copy()
         display.columns = ['Timestamp', 'Prediction (MW)']
-        print(f"Range: {results['predicted_demand'].min():.0f} - {results['predicted_demand'].max():.0f} MW")
-    
+        print(f"Range: {results['predicted_demand'].min():.0f}"
+              f" – {results['predicted_demand'].max():.0f} MW")
+
     print(f"\n{display.to_string(index=False)}\n")
     return results
 

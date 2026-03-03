@@ -3,8 +3,7 @@ Dynamic Feature Engineering Pipeline
 Generates features for inference — uses the exact same logic as
 complete_data.py to avoid training/serving skew.
 
-Feature set: 30 features selected via Ridge regression walk-forward CV
-in notebooks/02_feature_engineering.ipynb (leakage-fixed).
+Feature set: 22 features (v3) aligned with training/train.py ALL_FEATURES.
 """
 
 import os
@@ -34,7 +33,7 @@ def get_db_engine():
 def load_historical_data(engine, end_date: str | None = None, limit: int = 1000) -> pd.DataFrame:
     """Load raw historical data from database.
 
-    Includes humidity, rain, snowfall — required by the 30-feature set.
+    Includes humidity, rain, snowfall — required by the 22-feature set.
     """
     date_filter = ""
     if end_date:
@@ -92,11 +91,6 @@ def _add_temporal_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Calendar flags
     df['is_public_holiday'] = df['is_public_holiday'].astype(float)
-    df['is_monday_after_weekend'] = (dow == 0).astype(float)
-    df['is_friday_before_weekend'] = ((dow == 4) & (hour >= 12)).astype(float)
-    df['day_transition_type'] = 0.0
-    df.loc[dow == 6, 'day_transition_type'] = 1.0   # Sunday→Monday
-    df.loc[dow == 4, 'day_transition_type'] = 2.0   # Friday→Saturday
     df['is_weekend'] = (dow >= 5).astype(float)
 
     # Season (categorical — used by TFT)
@@ -124,28 +118,16 @@ def _add_demand_lag_features(df: pd.DataFrame) -> pd.DataFrame:
     demand = df['target_demand']
     demand_mean = demand.mean()
     demand_std = demand.std()
-    dow = df['timestamp'].dt.dayofweek
 
-    # Raw lags
-    lag_24h = demand.shift(24).fillna(demand_mean)
-    lag_48h = demand.shift(48).fillna(demand_mean)
     lag_168h = demand.shift(168).fillna(demand_mean)
 
-    # Normalised lags
-    df['demand_lag_24h_norm'] = lag_24h / SCALE_FACTOR
+    # Weekly lag (only lag kept — 24h removed as redundant with encoder sequence)
     df['demand_lag_168h_norm'] = lag_168h / SCALE_FACTOR
 
-    # Delta: rate of change from 48h ago to 24h ago (both historical — no leakage)
-    df['demand_delta_24h'] = (lag_24h - lag_48h) / SCALE_FACTOR
-
-    # Rolling std over 7-day window, shifted by 1 to exclude demand(t)
+    # Rolling volatility: std over 7-day window shifted by 1 to exclude demand(t)
     df['demand_rolling_std_7d'] = (
         demand.shift(1).rolling(168, min_periods=24).std().fillna(demand_std) / SCALE_FACTOR
     )
-
-    # Lag day-type context flags
-    df['lag_24h_was_weekend'] = (dow.shift(1).fillna(dow) >= 5).astype(float)
-    df['lag_168h_was_weekend'] = df['is_weekend']
 
     return df
 
@@ -154,12 +136,6 @@ def _add_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add interaction features — identical to complete_data.add_interaction_features."""
     df['heating_hour_cos_product'] = df['heating_demand'] * df['hour_cos']
     df['weekend_temp_interaction'] = df['is_weekend'] * df['temperature']
-
-    # dow_sin needed as intermediate only
-    dow = df['timestamp'].dt.dayofweek
-    dow_sin = np.sin(2 * np.pi * dow / 7)
-    df['dow_sin_temp'] = dow_sin * df['temperature']
-
     return df
 
 
@@ -196,20 +172,8 @@ def generate_future_features(historical_df: pd.DataFrame, hours: int) -> pd.Data
         month = ts.month
 
         # ---- Demand lags from historical data ----
-        lag_24h_idx = len(historical_df) - 24 + h - 1
-        lag_48h_idx = len(historical_df) - 48 + h - 1
         lag_168h_idx = len(historical_df) - 168 + h - 1
 
-        lag_24h = (
-            float(historical_df.iloc[lag_24h_idx]['target_demand'])
-            if 0 <= lag_24h_idx < len(historical_df)
-            else demand_mean
-        )
-        lag_48h = (
-            float(historical_df.iloc[lag_48h_idx]['target_demand'])
-            if 0 <= lag_48h_idx < len(historical_df)
-            else demand_mean
-        )
         lag_168h = (
             float(historical_df.iloc[lag_168h_idx]['target_demand'])
             if 0 <= lag_168h_idx < len(historical_df)
@@ -218,8 +182,6 @@ def generate_future_features(historical_df: pd.DataFrame, hours: int) -> pd.Data
 
         heating = max(BALANCE_POINT - last_temp, 0.0)
         hour_cos = float(np.cos(2 * np.pi * hour / 24))
-        dow_sin = float(np.sin(2 * np.pi * dow / 7))
-        prev_dow = (ts - timedelta(hours=24)).weekday()
 
         row: dict = {
             'timestamp': ts,
@@ -237,23 +199,15 @@ def generate_future_features(historical_df: pd.DataFrame, hours: int) -> pd.Data
             'month_cos': float(np.cos(2 * np.pi * (month - 1) / 12)),
             # Calendar
             'is_weekend': float(dow >= 5),
-            'is_monday_after_weekend': float(dow == 0),
-            'is_friday_before_weekend': float(dow == 4 and hour >= 12),
-            'day_transition_type': 1.0 if dow == 6 else (2.0 if dow == 4 else 0.0),
             # Weather derived
             'heating_demand': heating,
             'temp_lag_24h': last_temp,
             # Demand lags (leakage-free)
-            'demand_lag_24h_norm': lag_24h / SCALE_FACTOR,
             'demand_lag_168h_norm': lag_168h / SCALE_FACTOR,
-            'demand_delta_24h': (lag_24h - lag_48h) / SCALE_FACTOR,
             'demand_rolling_std_7d': demand_std / SCALE_FACTOR,
-            'lag_24h_was_weekend': float(prev_dow >= 5),
-            'lag_168h_was_weekend': float(dow >= 5),
             # Interactions
             'heating_hour_cos_product': heating * hour_cos,
             'weekend_temp_interaction': float(dow >= 5) * last_temp,
-            'dow_sin_temp': dow_sin * last_temp,
         }
 
         # Day-of-week dummies

@@ -20,8 +20,7 @@ services:
     networks:
       - forecast_network
 
-  # Optional: Forecast API Service
-  # Uncomment to enable the API endpoint
+  # Forecast API Service (uncomment to enable)
   # api:
   #   build: .
   #   container_name: energy_forecast_api
@@ -38,10 +37,9 @@ services:
   #     postgres:
   #       condition: service_healthy
   #   volumes:
-  #     - ./experiments:/app/experiments:ro
+  #     - ./training/models:/app/training/models:ro
   #   networks:
   #     - forecast_network
-  #   command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 
 volumes:
   postgres_data:
